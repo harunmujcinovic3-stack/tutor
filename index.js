@@ -42,7 +42,9 @@ app.post('/analyze', async (req, res) => {
     const { image } = req.body;
     if (!image) return res.json({ answer: null });
 
-    const hash = simpleHash(image.slice(0, 5000));
+    // Hash middle section of image (header bytes are identical across screenshots)
+    const mid = Math.floor(image.length / 2);
+    const hash = simpleHash(image.slice(mid, mid + 20000));
     if (hash === previousHash) return res.json({ answer: null });
     previousHash = hash;
 
