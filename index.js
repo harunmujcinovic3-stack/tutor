@@ -4,7 +4,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const app = express();
 app.use(express.json({ limit: '10mb' }));
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const client = new Anthropic({ apiKey: process.env.claude_api || process.env.ANTHROPIC_API_KEY });
 
 const SYSTEM_PROMPT = `Je bent een onzichtbare AI-assistent. Je ontvangt een screenshot van iemands scherm en analyseert of er een nieuwe vraag, opgave of taak te zien is.
 
