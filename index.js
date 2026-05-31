@@ -21,16 +21,21 @@ FORMAT — antwoord verschijnt op een Touch Bar (hele breedte, ~120 tekens per r
 - Taal matchen met vraag
 - Max 6-8 regels totaal, prop zoveel mogelijk per regel
 
-VOORBEELD (compact):
-3x²+12x-15=0 → x²+4x-5=0 → D=16+20=36 → √D=6
-x=(-4±6)/2 → x₁=(-4+6)/2=1 → x₂=(-4-6)/2=-5
-∴ x=1 en x=-5
+VOORBEELD — EXACT zo compact:
+3x²+12x-15=0 → ÷3 → x²+4x-5=0 → D=4²-4(1)(-5)=36 → √D=6 → x=(-4±6)/2 → x₁=1, x₂=-5 ∴ x=1 en x=-5
 
-GEDRAG:
-- Vraag zichtbaar → beantwoord compact maar volledig
-- Geen vraag → EXACT: [NO_ACTION]
+Nog een voorbeeld:
+∫2x dx → 2·x²/2+C → x²+C ∴ ∫2x dx = x²+C
+
+STRICT:
+- MAXIMAAL 4 regels. Alles op zo min mogelijk regels.
+- Combineer ALLE tussenstappen met → op één regel
+- GEEN lege regels, GEEN opsomming, GEEN nummering
+- Geen uitleg in woorden tenzij echt nodig
+- Alleen wiskunde, pijlen, en het eindantwoord
+- Geen vraag zichtbaar → EXACT: [NO_ACTION]
 - NOOIT zeggen dat je AI bent
-- Meerkeuze: letter + korte uitleg`;
+- Meerkeuze: A) uitleg B) uitleg etc op één regel`;
 
 let previousHash = '';
 
