@@ -85,6 +85,32 @@ app.post('/analyze', async (req, res) => {
   }
 });
 
+// Text endpoint - reads extracted screen text (no screenshot needed, cheaper)
+app.post('/ask', async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text || text.trim().length < 5) return res.json({ answer: null });
+
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 4096,
+      system: SYSTEM_PROMPT,
+      messages: [{
+        role: 'user',
+        content: `Dit is tekst van een scherm (via accessibility uitgelezen). Vind de vraag/opgave en los volledig op, ALLES op één regel met → ertussen, of [NO_ACTION].\n\n[SCHERM]\n${text.slice(0, 12000)}`
+      }]
+    });
+
+    const answer = response.content[0]?.text?.trim() || '[NO_ACTION]';
+    if (answer.includes('[NO_ACTION]')) return res.json({ answer: null });
+
+    res.json({ answer });
+  } catch (err) {
+    console.error('Error:', err.message);
+    res.json({ answer: null, error: err.message });
+  }
+});
+
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 const PORT = process.env.PORT || 3000;
