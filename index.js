@@ -266,12 +266,21 @@ async function fetchFromTrendHero(username, debug = false) {
       Object.defineProperty(navigator, 'webdriver', { get: () => false });
     });
 
-    await page.goto(`https://trendhero.io/instagram/${username}/`, {
+    await page.goto('https://trendhero.io/instagram-follower-count/', {
       waitUntil: 'networkidle',
       timeout: 30000,
     });
-    // Wait extra for dynamic content
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(2000);
+
+    // Type the username into the search field and submit
+    const input = await page.$('input[type="text"], input[type="search"], input[name="username"], input[placeholder*="user"], input[placeholder*="name"], input[placeholder*="search"], input');
+    if (input) {
+      await input.fill(username);
+      await page.waitForTimeout(500);
+      // Try pressing Enter or clicking a search button
+      await input.press('Enter');
+      await page.waitForTimeout(5000);
+    }
 
     // Grab all image sources from the page
     const photos = await page.evaluate((uname) => {
