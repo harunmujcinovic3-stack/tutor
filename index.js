@@ -241,7 +241,7 @@ function upgradeToHD(cdnUrl) {
   return [...new Set(variants)];
 }
 
-async function fetchFromTrendHero(username) {
+async function fetchFromTrendHero(username, debug = false) {
   let browser;
   try {
     const executablePath = process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
@@ -257,33 +257,65 @@ async function fetchFromTrendHero(username) {
     });
 
     // Grab all image sources from the page
-    const photos = await page.evaluate(() => {
+    const photos = await page.evaluate((uname) => {
       const results = [];
+      // Get ALL images on the page
       document.querySelectorAll('img').forEach((img) => {
-        const src = img.src || img.getAttribute('data-src') || '';
-        if (src && (src.includes('cdninstagram') || src.includes('fbcdn.net') || src.includes('instagram'))) {
-          results.push(src);
+        const src = img.src || img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || '';
+        if (src && !src.includes('data:image') && !src.includes('.svg')) {
+          results.push({ src, alt: img.alt || '', cls: img.className || '', w: img.naturalWidth });
         }
       });
-      // Also check background images
-      document.querySelectorAll('[style*="background"]').forEach((el) => {
-        const bg = el.style.backgroundImage || '';
-        const match = bg.match(/url\(["']?([^"')]+)/);
-        if (match && (match[1].includes('cdninstagram') || match[1].includes('fbcdn.net'))) {
-          results.push(match[1]);
+      // Check background images on all elements
+      document.querySelectorAll('*').forEach((el) => {
+        const bg = getComputedStyle(el).backgroundImage || '';
+        if (bg && bg !== 'none') {
+          const match = bg.match(/url\(["']?([^"')]+)/);
+          if (match && !match[1].includes('data:image') && !match[1].includes('.svg')) {
+            results.push({ src: match[1], alt: 'bg-image', cls: el.className || '', w: 0 });
+          }
         }
       });
       return results;
-    });
+    }, username);
 
+    const pageTitle = await page.title();
+    const pageUrl = page.url();
     await browser.close();
-    return photos.length > 0 ? photos[0] : null;
+
+    if (debug) return { photos, pageTitle, pageUrl };
+    if (photos.length === 0) return null;
+
+    // Try to find the profile photo: look for CDN URLs first, then largest image
+    const cdnPhoto = photos.find((p) =>
+      p.src.includes('cdninstagram') || p.src.includes('fbcdn.net')
+    );
+    if (cdnPhoto) return cdnPhoto.src;
+
+    // Return the first non-tiny, non-icon image (likely the profile photo)
+    const candidate = photos.find((p) =>
+      !p.src.includes('logo') && !p.src.includes('icon') && !p.src.includes('favicon')
+    );
+    return candidate ? candidate.src : photos[0].src;
   } catch (err) {
     console.error('TrendHero fetch error:', err.message);
     if (browser) await browser.close().catch(() => {});
     return null;
   }
 }
+
+app.get('/profile-photo-debug', async (req, res) => {
+  try {
+    const username = (req.query.username || '').trim();
+    if (!username || !/^[\w.]{1,60}$/.test(username)) {
+      return res.status(400).json({ error: 'Voer een geldige gebruikersnaam in.' });
+    }
+    const result = await fetchFromTrendHero(username, true);
+    res.json({ username, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 app.get('/profile-photo-hd', async (req, res) => {
   try {
