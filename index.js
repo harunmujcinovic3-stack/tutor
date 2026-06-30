@@ -111,6 +111,122 @@ app.post('/ask', async (req, res) => {
   }
 });
 
+// --- Profile Photo History (Wayback Machine) ---
+
+const PLATFORM_URLS = {
+  instagram: (u) => `https://www.instagram.com/${u}/`,
+  twitter: (u) => `https://twitter.com/${u}`,
+  x: (u) => `https://x.com/${u}`,
+};
+
+const CDX_API = 'https://web.archive.org/cdx/search/cdx';
+
+async function fetchSnapshots(profileUrl, limit) {
+  const params = new URLSearchParams({
+    url: profileUrl,
+    output: 'json',
+    fl: 'timestamp,original,statuscode',
+    filter: 'statuscode:200',
+    collapse: 'timestamp:6',
+    limit: String(limit),
+  });
+
+  const res = await fetch(`${CDX_API}?${params}`, {
+    signal: AbortSignal.timeout(15000),
+  });
+
+  if (!res.ok) throw new Error(`Wayback Machine API error: ${res.status}`);
+
+  const data = await res.json();
+  if (!data || data.length < 2) return [];
+
+  const [, ...rows] = data;
+  return rows.map(([timestamp, original]) => ({ timestamp, original }));
+}
+
+async function extractProfilePhoto(archiveUrl) {
+  try {
+    const res = await fetch(archiveUrl, {
+      signal: AbortSignal.timeout(10000),
+      headers: { 'User-Agent': 'ProfilePhotoHistoryTool/1.0' },
+    });
+    if (!res.ok) return null;
+
+    const html = await res.text();
+
+    const ogMatch =
+      html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
+      html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
+
+    if (ogMatch && ogMatch[1]) return ogMatch[1];
+
+    const imgMatch = html.match(/<img[^>]+class="[^"]*profile[^"]*"[^>]+src=["']([^"']+)["']/i);
+    return imgMatch ? imgMatch[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+function formatTimestamp(ts) {
+  return `${ts.slice(0, 4)}-${ts.slice(4, 6)}-${ts.slice(6, 8)}`;
+}
+
+app.get('/profile-photos', async (req, res) => {
+  try {
+    const username = (req.query.username || '').trim();
+    const platform = (req.query.platform || 'instagram').toLowerCase();
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 20, 1), 50);
+
+    if (!username || !/^[\w.]{1,60}$/.test(username)) {
+      return res.status(400).json({
+        error: 'Voer een geldige gebruikersnaam in (letters, cijfers, underscores, punten).',
+      });
+    }
+
+    const urlBuilder = PLATFORM_URLS[platform];
+    if (!urlBuilder) {
+      return res.status(400).json({
+        error: `Ongeldig platform. Kies uit: ${Object.keys(PLATFORM_URLS).join(', ')}`,
+      });
+    }
+
+    const profileUrl = urlBuilder(username);
+    const rawSnapshots = await fetchSnapshots(profileUrl, limit);
+
+    if (rawSnapshots.length === 0) {
+      return res.json({
+        username,
+        platform,
+        message: 'Geen gearchiveerde snapshots gevonden voor dit profiel.',
+        snapshots: [],
+      });
+    }
+
+    const snapshots = await Promise.all(
+      rawSnapshots.map(async ({ timestamp, original }) => {
+        const archiveUrl = `https://web.archive.org/web/${timestamp}/${original}`;
+        const photoUrl = await extractProfilePhoto(archiveUrl);
+        return { timestamp, date: formatTimestamp(timestamp), archiveUrl, photoUrl };
+      })
+    );
+
+    const withPhotos = snapshots.filter((s) => s.photoUrl !== null);
+
+    res.json({
+      username,
+      platform,
+      totalSnapshots: snapshots.length,
+      snapshotsWithPhotos: withPhotos.length,
+      snapshots,
+    });
+  } catch (err) {
+    console.error('Profile photos error:', err.message);
+    res.status(502).json({
+      error: `Fout bij ophalen van profielfotos: ${err.message}`,
+    });
+  }
+});
+
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 const PORT = process.env.PORT || 3000;
