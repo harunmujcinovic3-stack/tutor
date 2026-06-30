@@ -24,7 +24,8 @@ function normalizeNumber(phone: string): string {
 
 export async function lookupNumberToUsername(
   number: string,
-  sessionId: string
+  sessionId: string,
+  csrfToken: string
 ): Promise<
   | { username: string }
   | { error: string; status: number; debug?: string }
@@ -48,11 +49,15 @@ export async function lookupNumberToUsername(
   });
 
   try {
+    const decodedSession = decodeURIComponent(sessionId);
+    const dsUserId = decodedSession.split(":")[0];
+
     const res = await fetch(`${IG_API}/address_book/link/`, {
       method: "POST",
       headers: {
         ...HEADERS,
-        Cookie: `sessionid=${sessionId}; ds_user_id=${sessionId.split("%3A")[0] ?? sessionId.split(":")[0]}`,
+        "X-CSRFToken": csrfToken,
+        Cookie: `sessionid=${decodedSession}; ds_user_id=${dsUserId}; csrftoken=${csrfToken}; rur=NHA`,
       },
       body: body.toString(),
     });

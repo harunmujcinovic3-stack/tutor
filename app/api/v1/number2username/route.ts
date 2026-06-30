@@ -3,6 +3,7 @@ import { ERRORS } from "../_lib/errors";
 import { lookupNumberToUsername } from "../_lib/instagram";
 
 const DEFAULT_SESSION = "7346060017%3ApbU2OQ0y7FHoHa%3A3%3AAYjycgvleOj1qqqvHVAPwLWhaV98Wnhx7ebj6iI18Vk";
+const DEFAULT_CSRF = "kM027WCeApgK1iDGJQd7QAjrfyLIgNJu";
 
 export async function GET(request: NextRequest) {
   const number = request.nextUrl.searchParams.get("number");
@@ -13,7 +14,8 @@ export async function GET(request: NextRequest) {
   }
 
   const sessionId = request.nextUrl.searchParams.get("session_id") ?? DEFAULT_SESSION;
-  const result = await lookupNumberToUsername(number, sessionId);
+  const csrf = request.nextUrl.searchParams.get("csrf") ?? DEFAULT_CSRF;
+  const result = await lookupNumberToUsername(number, sessionId, csrf);
 
   if ("error" in result) {
     const debug = "debug" in result ? result.debug : undefined;
