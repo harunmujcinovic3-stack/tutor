@@ -1,6 +1,5 @@
 const express = require('express');
 const Anthropic = require('@anthropic-ai/sdk');
-const { chromium } = require('playwright');
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -226,130 +225,80 @@ app.get('/profile-photos', async (req, res) => {
   }
 });
 
-// Try to upgrade an Instagram CDN URL to higher resolution
-function upgradeToHD(cdnUrl) {
-  if (!cdnUrl) return [];
-  const variants = [cdnUrl];
-  // Remove size params like /s150x150/ or /s320x320/ to get original
-  const noSize = cdnUrl.replace(/\/s\d+x\d+\//, '/');
-  if (noSize !== cdnUrl) variants.push(noSize);
-  // Try common HD sizes
-  const hd = cdnUrl.replace(/\/s\d+x\d+\//, '/s1080x1080/');
-  if (hd !== cdnUrl) variants.push(hd);
-  const large = cdnUrl.replace(/\/s\d+x\d+\//, '/s640x640/');
-  if (large !== cdnUrl) variants.push(large);
-  return [...new Set(variants)];
+function toHD(url) {
+  if (!url) return null;
+  // Remove size restriction from stp parameter: s150x150 → s1080x1080
+  let hd = url.replace(/stp=dst-([^&]*?)s\d+x\d+/, 'stp=dst-$1s1080x1080');
+  // Also try removing the stp param entirely for original size
+  const original = url.replace(/[?&]stp=[^&]+/, '');
+  return { hd, original };
 }
 
-async function fetchFromTrendHero(username, debug = false) {
-  let browser;
-  try {
-    const launchOpts = {
-      headless: false,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-blink-features=AutomationControlled',
-        '--headless=new',
-      ],
-    };
-    if (process.env.CHROMIUM_PATH) launchOpts.executablePath = process.env.CHROMIUM_PATH;
-    browser = await chromium.launch(launchOpts);
-    const context = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      viewport: { width: 1280, height: 800 },
-    });
-    const page = await context.newPage();
-
-    // Hide webdriver property
-    await page.addInitScript(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => false });
-    });
-
-    await page.goto('https://trendhero.io/instagram-follower-count/', {
-      waitUntil: 'networkidle',
-      timeout: 30000,
-    });
-    await page.waitForTimeout(2000);
-
-    // Type the username into the search field and submit
-    const input = await page.$('input[type="text"], input[type="search"], input[name="username"], input[placeholder*="user"], input[placeholder*="name"], input[placeholder*="search"], input');
-    if (input) {
-      await input.fill(username);
-      await page.waitForTimeout(500);
-      // Try pressing Enter or clicking a search button
-      await input.press('Enter');
-      await page.waitForTimeout(5000);
+async function getInstagramUserInfo(username) {
+  // Try searching by username first to get user ID
+  const searchRes = await fetch(
+    `https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
+    {
+      signal: AbortSignal.timeout(10000),
+      headers: {
+        'User-Agent': 'Instagram 275.0.0.27.98 Android',
+        'X-IG-App-ID': '936619743392459',
+      },
     }
+  );
 
-    // Grab all image sources from the page
-    const photos = await page.evaluate((uname) => {
-      const results = [];
-      // Get ALL images on the page
-      document.querySelectorAll('img').forEach((img) => {
-        const src = img.src || img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || '';
-        if (src && !src.includes('data:image') && !src.includes('.svg')) {
-          results.push({ src, alt: img.alt || '', cls: img.className || '', w: img.naturalWidth });
-        }
-      });
-      // Check background images on all elements
-      document.querySelectorAll('*').forEach((el) => {
-        const bg = getComputedStyle(el).backgroundImage || '';
-        if (bg && bg !== 'none') {
-          const match = bg.match(/url\(["']?([^"')]+)/);
-          if (match && !match[1].includes('data:image') && !match[1].includes('.svg')) {
-            results.push({ src: match[1], alt: 'bg-image', cls: el.className || '', w: 0 });
-          }
-        }
-      });
-      return results;
-    }, username);
-
-    const pageTitle = await page.title();
-    const pageUrl = page.url();
-
-    let screenshotPath = null;
-    if (debug) {
-      const path = require('path');
-      screenshotPath = path.join(__dirname, `debug-${username}.png`);
-      await page.screenshot({ path: screenshotPath, fullPage: true });
+  if (searchRes.ok) {
+    const data = await searchRes.json();
+    const user = data?.data?.user;
+    if (user) {
+      return {
+        id: user.id,
+        username: user.username,
+        profilePic: user.profile_pic_url,
+        hdProfilePic: user.hd_profile_pic_url_info?.url || user.profile_pic_url_hd || null,
+      };
     }
-
-    await browser.close();
-
-    if (debug) return { photos, pageTitle, pageUrl, screenshotPath };
-    if (photos.length === 0) return null;
-
-    // Try to find the profile photo: look for CDN URLs first, then largest image
-    const cdnPhoto = photos.find((p) =>
-      p.src.includes('cdninstagram') || p.src.includes('fbcdn.net')
-    );
-    if (cdnPhoto) return cdnPhoto.src;
-
-    // Return the first non-tiny, non-icon image (likely the profile photo)
-    const candidate = photos.find((p) =>
-      !p.src.includes('logo') && !p.src.includes('icon') && !p.src.includes('favicon')
-    );
-    return candidate ? candidate.src : photos[0].src;
-  } catch (err) {
-    console.error('TrendHero fetch error:', err.message);
-    if (browser) await browser.close().catch(() => {});
-    return null;
   }
+
+  // Fallback: try the v1 users endpoint with search
+  const fallbackRes = await fetch(
+    `https://i.instagram.com/api/v1/users/search/?q=${encodeURIComponent(username)}`,
+    {
+      signal: AbortSignal.timeout(10000),
+      headers: { 'User-Agent': 'Instagram 275.0.0.27.98 Android' },
+    }
+  );
+
+  if (!fallbackRes.ok) throw new Error(`Instagram API error: ${fallbackRes.status}`);
+
+  const fallbackData = await fallbackRes.json();
+  const match = fallbackData?.users?.find(
+    (u) => u.username.toLowerCase() === username.toLowerCase()
+  );
+
+  if (!match) return null;
+
+  // Get full info with user ID
+  const infoRes = await fetch(
+    `https://i.instagram.com/api/v1/users/${match.pk}/info/`,
+    {
+      signal: AbortSignal.timeout(10000),
+      headers: { 'User-Agent': 'Instagram 275.0.0.27.98 Android' },
+    }
+  );
+
+  if (!infoRes.ok) throw new Error(`Instagram API error: ${infoRes.status}`);
+
+  const infoData = await infoRes.json();
+  const user = infoData?.user;
+
+  return {
+    id: user.pk || user.id,
+    username: user.username,
+    profilePic: user.profile_pic_url,
+    hdProfilePic: user.hd_profile_pic_url_info?.url || user.profile_pic_url_hd || null,
+  };
 }
-
-app.get('/profile-photo-debug', async (req, res) => {
-  try {
-    const username = (req.query.username || '').trim();
-    if (!username || !/^[\w.]{1,60}$/.test(username)) {
-      return res.status(400).json({ error: 'Voer een geldige gebruikersnaam in.' });
-    }
-    const result = await fetchFromTrendHero(username, true);
-    res.json({ username, ...result });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
 app.get('/profile-photo-hd', async (req, res) => {
   try {
@@ -361,29 +310,29 @@ app.get('/profile-photo-hd', async (req, res) => {
       });
     }
 
-    console.log(`Fetching profile photo for @${username} from TrendHero...`);
-    const photoUrl = await fetchFromTrendHero(username);
+    const user = await getInstagramUserInfo(username);
 
-    if (!photoUrl) {
-      return res.json({
-        username,
-        message: 'Kon geen profielfoto vinden op TrendHero.',
-        photoUrl: null,
-        hdVariants: [],
+    if (!user) {
+      return res.status(404).json({
+        error: 'Gebruiker niet gevonden op Instagram.',
       });
     }
 
-    const hdVariants = upgradeToHD(photoUrl);
+    const hdUrl = user.hdProfilePic;
+    const sdUrl = user.profilePic;
+    const upgraded = toHD(sdUrl);
 
     res.json({
-      username,
-      photoUrl,
-      hdVariants,
+      username: user.username,
+      userId: user.id,
+      hdProfilePic: hdUrl,
+      sdProfilePic: sdUrl,
+      upgradedUrls: upgraded,
     });
   } catch (err) {
     console.error('Profile photo HD error:', err.message);
     res.status(502).json({
-      error: `Fout bij ophalen van profielfoto: ${err.message}`,
+      error: `Fout bij ophalen: ${err.message}`,
     });
   }
 });
