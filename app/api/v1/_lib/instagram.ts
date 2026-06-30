@@ -1,8 +1,15 @@
-const IG_WEB = "https://www.instagram.com";
 const IG_API = "https://i.instagram.com/api/v1";
 
-const ANDROID_UA =
-  "Instagram 332.0.0.38.90 Android (33/13; 420dpi; 1080x2400; samsung; SM-G991B; o1s; exynos2100; en_US; 604247854)";
+const HEADERS = {
+  "User-Agent":
+    "Instagram 332.0.0.38.90 Android (33/13; 420dpi; 1080x2400; samsung; SM-G991B; o1s; exynos2100; en_US; 604247854)",
+  "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+  "X-IG-App-ID": "567067343352427",
+  "X-IG-Connection-Type": "WIFI",
+  "X-IG-Capabilities": "3brTvx0=",
+  Accept: "*/*",
+  "Accept-Language": "en-US,en;q=0.9",
+};
 
 function normalizeNumber(phone: string): string {
   let n = phone.replace(/[\s\-().]/g, "");
@@ -12,96 +19,96 @@ function normalizeNumber(phone: string): string {
   return n;
 }
 
-async function getCsrfToken(): Promise<string | null> {
-  try {
-    const res = await fetch(`${IG_WEB}/accounts/login/`, {
-      headers: { "User-Agent": ANDROID_UA },
-    });
-    const cookies = res.headers.get("set-cookie") ?? "";
-    const match = cookies.match(/csrftoken=([^;]+)/);
-    return match ? match[1] : null;
-  } catch {
-    return null;
-  }
-}
-
 export async function lookupNumberToUsername(
   number: string
 ): Promise<
-  | { username: string; masked?: boolean }
+  | { username: string }
   | { error: string; status: number; debug?: string }
 > {
   const normalized = normalizeNumber(number);
-  const csrf = await getCsrfToken();
+  const deviceId = crypto.randomUUID();
 
-  if (!csrf) {
-    return { error: "FETCH_FAILED", status: 424, debug: "Could not get CSRF token from Instagram" };
-  }
-
-  // Step 1: Send the phone number to account recovery to check if it exists
   try {
     const body = new URLSearchParams({
       query: normalized,
-      device_id: crypto.randomUUID(),
+      device_id: deviceId,
       guid: crypto.randomUUID(),
+      directly_sign_in: "true",
     });
 
     const res = await fetch(`${IG_API}/users/lookup/`, {
       method: "POST",
       headers: {
-        "User-Agent": ANDROID_UA,
-        "Content-Type": "application/x-www-form-urlencoded",
-        "X-CSRFToken": csrf,
-        Cookie: `csrftoken=${csrf}`,
+        ...HEADERS,
+        "X-Device-ID": deviceId,
       },
       body: body.toString(),
     });
 
-    const data = await res.json();
-
-    if (!res.ok) {
-      if (res.status === 429) return { error: "RATE_LIMIT", status: 429 };
-      if (data?.message === "user_not_found" || data?.status === "fail") {
-        return { error: "No Instagram account found for this number.", status: 404 };
-      }
-      return { error: "FETCH_FAILED", status: 424, debug: JSON.stringify(data) };
-    }
-
-    // The lookup response may contain obfuscated contact info
-    // Try to extract username from the response
-    if (data?.user?.username) {
-      return { username: data.user.username };
-    }
-
-    // If we get an obfuscated email/phone but no username, use the user_id to get profile
-    const userId = data?.user?.pk ?? data?.user?.pk_v2;
-    if (userId) {
-      const profileRes = await fetch(`${IG_API}/users/${userId}/info/`, {
-        headers: {
-          "User-Agent": ANDROID_UA,
-          "X-CSRFToken": csrf,
-          Cookie: `csrftoken=${csrf}`,
-        },
-      });
-
-      if (profileRes.ok) {
-        const profileData = await profileRes.json();
-        if (profileData?.user?.username) {
-          return { username: profileData.user.username };
-        }
-      }
-    }
-
-    // Return whatever obfuscated info we got
-    const obfuscated = data?.obfuscated_phone ?? data?.user?.obfuscated_phone;
-    if (obfuscated) {
+    const text = await res.text();
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(text);
+    } catch {
       return {
-        error: "Account exists but username is masked. Found phone: " + obfuscated,
-        status: 404,
+        error: "FETCH_FAILED",
+        status: 424,
+        debug: `Instagram returned non-JSON (HTTP ${res.status}): ${text.slice(0, 200)}`,
       };
     }
 
-    return { error: "FETCH_FAILED", status: 424, debug: JSON.stringify(data) };
+    if (res.status === 429) return { error: "RATE_LIMIT", status: 429 };
+
+    // users/lookup can return the user object directly
+    const user = data.user as Record<string, unknown> | undefined;
+    if (user?.username) {
+      return { username: String(user.username) };
+    }
+
+    // Sometimes it returns a pk/pk_v2 we can use to fetch the profile
+    const userId = user?.pk ?? user?.pk_v2 ?? data.pk ?? data.pk_v2;
+    if (userId) {
+      try {
+        const profileRes = await fetch(`${IG_API}/users/${userId}/info/`, {
+          headers: HEADERS,
+        });
+        const profileText = await profileRes.text();
+        const profileData = JSON.parse(profileText);
+        if (profileData?.user?.username) {
+          return { username: String(profileData.user.username) };
+        }
+        return {
+          error: "FETCH_FAILED",
+          status: 424,
+          debug: `Got user_id ${userId} but profile lookup failed: ${profileText.slice(0, 200)}`,
+        };
+      } catch {
+        return {
+          error: "FETCH_FAILED",
+          status: 424,
+          debug: `Got user_id ${userId} but profile lookup errored`,
+        };
+      }
+    }
+
+    // Check if user not found
+    if (
+      data.message === "user_not_found" ||
+      data.status === "fail" ||
+      !res.ok
+    ) {
+      return {
+        error: "No Instagram account found for this number.",
+        status: 404,
+        debug: text.slice(0, 300),
+      };
+    }
+
+    return {
+      error: "FETCH_FAILED",
+      status: 424,
+      debug: `Unexpected response: ${text.slice(0, 300)}`,
+    };
   } catch (e) {
     return { error: "FETCH_FAILED", status: 424, debug: String(e) };
   }
