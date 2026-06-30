@@ -2,6 +2,8 @@ import { type NextRequest } from "next/server";
 import { ERRORS } from "../_lib/errors";
 import { lookupNumberToUsername } from "../_lib/instagram";
 
+const DEFAULT_SESSION = "7346060017%3ApbU2OQ0y7FHoHa%3A3%3AAYjycgvleOj1qqqvHVAPwLWhaV98Wnhx7ebj6iI18Vk";
+
 export async function GET(request: NextRequest) {
   const number = request.nextUrl.searchParams.get("number");
   if (!number) {
@@ -10,12 +12,13 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const result = await lookupNumberToUsername(number);
+  const sessionId = request.nextUrl.searchParams.get("session_id") ?? DEFAULT_SESSION;
+  const result = await lookupNumberToUsername(number, sessionId);
 
   if ("error" in result) {
     const debug = "debug" in result ? result.debug : undefined;
     return Response.json(
-      { status: "error", error: { code: result.error, message: result.error, debug }, http: result.status },
+      { status: "error", error: { code: result.error, message: result.error, debug } },
       { status: result.status }
     );
   }
