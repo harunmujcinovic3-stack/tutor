@@ -1,5 +1,6 @@
 const express = require('express');
 const Anthropic = require('@anthropic-ai/sdk');
+const { chromium } = require('playwright-core');
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -241,37 +242,45 @@ function upgradeToHD(cdnUrl) {
 }
 
 async function fetchFromTrendHero(username) {
+  let browser;
   try {
-    const res = await fetch(`https://trendhero.io/instagram/${username}/`, {
-      signal: AbortSignal.timeout(15000),
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      },
+    const executablePath = process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+    browser = await chromium.launch({
+      executablePath,
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
     });
-    if (!res.ok) return null;
+    const page = await browser.newPage();
+    await page.goto(`https://trendhero.io/instagram/${username}/`, {
+      waitUntil: 'networkidle',
+      timeout: 30000,
+    });
 
-    const html = await res.text();
+    // Grab all image sources from the page
+    const photos = await page.evaluate(() => {
+      const results = [];
+      document.querySelectorAll('img').forEach((img) => {
+        const src = img.src || img.getAttribute('data-src') || '';
+        if (src && (src.includes('cdninstagram') || src.includes('fbcdn.net') || src.includes('instagram'))) {
+          results.push(src);
+        }
+      });
+      // Also check background images
+      document.querySelectorAll('[style*="background"]').forEach((el) => {
+        const bg = el.style.backgroundImage || '';
+        const match = bg.match(/url\(["']?([^"')]+)/);
+        if (match && (match[1].includes('cdninstagram') || match[1].includes('fbcdn.net'))) {
+          results.push(match[1]);
+        }
+      });
+      return results;
+    });
 
-    // Look for profile image in the page
-    const imgMatch =
-      html.match(/<img[^>]+src=["'](https:\/\/[^"']*cdninstagram\.com[^"']+)["']/i) ||
-      html.match(/<img[^>]+src=["'](https:\/\/[^"']*instagram[^"']+)["']/i) ||
-      html.match(/<img[^>]+src=["'](https:\/\/[^"']*fbcdn\.net[^"']+)["']/i) ||
-      html.match(/["'](https:\/\/scontent[^"']*cdninstagram\.com[^"']+)["']/i) ||
-      html.match(/["'](https:\/\/[^"']*fbcdn\.net\/v\/[^"']+)["']/i);
-
-    if (imgMatch && imgMatch[1]) {
-      return imgMatch[1].replace(/&amp;/g, '&');
-    }
-
-    // Try og:image
-    const ogMatch =
-      html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
-      html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
-
-    return ogMatch?.[1]?.replace(/&amp;/g, '&') || null;
-  } catch {
+    await browser.close();
+    return photos.length > 0 ? photos[0] : null;
+  } catch (err) {
+    console.error('TrendHero fetch error:', err.message);
+    if (browser) await browser.close().catch(() => {});
     return null;
   }
 }
@@ -286,70 +295,24 @@ app.get('/profile-photo-hd', async (req, res) => {
       });
     }
 
-    const sources = [];
+    console.log(`Fetching profile photo for @${username} from TrendHero...`);
+    const photoUrl = await fetchFromTrendHero(username);
 
-    // Source 1: Try Instagram directly
-    try {
-      const profileRes = await fetch(`https://www.instagram.com/${username}/`, {
-        signal: AbortSignal.timeout(15000),
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.9',
-        },
-      });
-
-      if (profileRes.ok) {
-        const html = await profileRes.text();
-        const hdMatch = html.match(/"hd_profile_pic_url_info"\s*:\s*\{\s*"url"\s*:\s*"([^"]+)"/);
-        const standardMatch = html.match(/"profile_pic_url_hd"\s*:\s*"([^"]+)"/);
-        const ogMatch =
-          html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
-          html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
-
-        const url = hdMatch?.[1] || standardMatch?.[1] || ogMatch?.[1];
-        if (url) {
-          const clean = url.replace(/\\u0026/g, '&').replace(/\\\//g, '/');
-          sources.push({ source: 'instagram', url: clean, hd: !!(hdMatch || standardMatch) });
-        }
-      }
-    } catch {}
-
-    // Source 2: Try TrendHero (cached photos, works for deleted/changed photos)
-    try {
-      const thUrl = await fetchFromTrendHero(username);
-      if (thUrl) {
-        sources.push({ source: 'trendhero', url: thUrl, hd: false });
-      }
-    } catch {}
-
-    if (sources.length === 0) {
+    if (!photoUrl) {
       return res.json({
         username,
-        message: 'Kon geen profielfoto vinden via Instagram of TrendHero.',
+        message: 'Kon geen profielfoto vinden op TrendHero.',
         photoUrl: null,
-        sources: [],
+        hdVariants: [],
       });
     }
 
-    // Try to upgrade all found URLs to HD
-    const allVariants = [];
-    for (const s of sources) {
-      const hdVariants = upgradeToHD(s.url);
-      allVariants.push({
-        ...s,
-        hdVariants,
-      });
-    }
-
-    // Pick the best: prefer Instagram HD, then TrendHero upgraded
-    const best = sources.find((s) => s.hd) || sources[0];
+    const hdVariants = upgradeToHD(photoUrl);
 
     res.json({
       username,
-      photoUrl: best.url,
-      hdAvailable: best.hd,
-      sources: allVariants,
+      photoUrl,
+      hdVariants,
     });
   } catch (err) {
     console.error('Profile photo HD error:', err.message);
