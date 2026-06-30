@@ -234,60 +234,31 @@ function toHD(url) {
   return { hd, original };
 }
 
+const IG_HEADERS = { 'User-Agent': 'Instagram 275.0.0.27.98 Android' };
+
 async function getInstagramUserInfo(username) {
-  // Try searching by username first to get user ID
+  // Step 1: Search for user to get their ID
   const searchRes = await fetch(
-    `https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
-    {
-      signal: AbortSignal.timeout(10000),
-      headers: {
-        'User-Agent': 'Instagram 275.0.0.27.98 Android',
-        'X-IG-App-ID': '936619743392459',
-      },
-    }
-  );
-
-  if (searchRes.ok) {
-    const data = await searchRes.json();
-    const user = data?.data?.user;
-    if (user) {
-      return {
-        id: user.id,
-        username: user.username,
-        profilePic: user.profile_pic_url,
-        hdProfilePic: user.hd_profile_pic_url_info?.url || user.profile_pic_url_hd || null,
-      };
-    }
-  }
-
-  // Fallback: try the v1 users endpoint with search
-  const fallbackRes = await fetch(
     `https://i.instagram.com/api/v1/users/search/?q=${encodeURIComponent(username)}`,
-    {
-      signal: AbortSignal.timeout(10000),
-      headers: { 'User-Agent': 'Instagram 275.0.0.27.98 Android' },
-    }
+    { signal: AbortSignal.timeout(10000), headers: IG_HEADERS }
   );
 
-  if (!fallbackRes.ok) throw new Error(`Instagram API error: ${fallbackRes.status}`);
+  if (!searchRes.ok) throw new Error(`Instagram zoek-API error: ${searchRes.status}`);
 
-  const fallbackData = await fallbackRes.json();
-  const match = fallbackData?.users?.find(
+  const searchData = await searchRes.json();
+  const match = searchData?.users?.find(
     (u) => u.username.toLowerCase() === username.toLowerCase()
   );
 
   if (!match) return null;
 
-  // Get full info with user ID
+  // Step 2: Get full user info with ID (this endpoint works reliably)
   const infoRes = await fetch(
     `https://i.instagram.com/api/v1/users/${match.pk}/info/`,
-    {
-      signal: AbortSignal.timeout(10000),
-      headers: { 'User-Agent': 'Instagram 275.0.0.27.98 Android' },
-    }
+    { signal: AbortSignal.timeout(10000), headers: IG_HEADERS }
   );
 
-  if (!infoRes.ok) throw new Error(`Instagram API error: ${infoRes.status}`);
+  if (!infoRes.ok) throw new Error(`Instagram user-API error: ${infoRes.status}`);
 
   const infoData = await infoRes.json();
   const user = infoData?.user;
