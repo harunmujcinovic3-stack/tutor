@@ -1,6 +1,6 @@
 const IG_API = "https://i.instagram.com/api/v1";
 
-const HEADERS = {
+const HEADERS: Record<string, string> = {
   "User-Agent":
     "Instagram 332.0.0.38.90 Android (33/13; 420dpi; 1080x2400; samsung; SM-G991B; o1s; exynos2100; en_US; 604247854)",
   "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
@@ -9,6 +9,9 @@ const HEADERS = {
   "X-IG-Capabilities": "3brTvx0=",
   Accept: "*/*",
   "Accept-Language": "en-US,en;q=0.9",
+  "Sec-Fetch-Site": "same-origin",
+  "Sec-Fetch-Mode": "cors",
+  "Sec-Fetch-Dest": "empty",
 };
 
 function normalizeNumber(phone: string): string {
