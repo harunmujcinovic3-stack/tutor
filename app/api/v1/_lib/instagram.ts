@@ -1,18 +1,4 @@
-const IG_API = "https://i.instagram.com/api/v1";
-
-const HEADERS: Record<string, string> = {
-  "User-Agent":
-    "Instagram 332.0.0.38.90 Android (33/13; 420dpi; 1080x2400; samsung; SM-G991B; o1s; exynos2100; en_US; 604247854)",
-  "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-  "X-IG-App-ID": "567067343352427",
-  "X-IG-Connection-Type": "WIFI",
-  "X-IG-Capabilities": "3brTvx0=",
-  Accept: "*/*",
-  "Accept-Language": "en-US,en;q=0.9",
-  "Sec-Fetch-Site": "same-origin",
-  "Sec-Fetch-Mode": "cors",
-  "Sec-Fetch-Dest": "empty",
-};
+const IG_API = "https://www.instagram.com/api/v1";
 
 function normalizeNumber(phone: string): string {
   let n = phone.replace(/[\s\-().]/g, "");
@@ -24,7 +10,7 @@ function normalizeNumber(phone: string): string {
 
 export async function lookupNumberToUsername(
   number: string,
-  sessionId: string,
+  cookies: string,
   csrfToken: string
 ): Promise<
   | { username: string }
@@ -49,15 +35,25 @@ export async function lookupNumberToUsername(
   });
 
   try {
-    const decodedSession = decodeURIComponent(sessionId);
-    const dsUserId = decodedSession.split(":")[0];
-
     const res = await fetch(`${IG_API}/address_book/link/`, {
       method: "POST",
       headers: {
-        ...HEADERS,
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
         "X-CSRFToken": csrfToken,
-        Cookie: `sessionid=${decodedSession}; ds_user_id=${dsUserId}; csrftoken=${csrfToken}; rur=NHA`,
+        "X-IG-App-ID": "936619743392459",
+        "X-Requested-With": "XMLHttpRequest",
+        "X-ASBD-ID": "129477",
+        "X-IG-WWW-Claim": "0",
+        Origin: "https://www.instagram.com",
+        Referer: "https://www.instagram.com/",
+        Accept: "*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Sec-Fetch-Site": "same-origin",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Dest": "empty",
+        Cookie: cookies,
       },
       body: body.toString(),
     });
