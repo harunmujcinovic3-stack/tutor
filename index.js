@@ -225,6 +225,73 @@ app.get('/profile-photos', async (req, res) => {
   }
 });
 
+app.get('/profile-photo-hd', async (req, res) => {
+  try {
+    const username = (req.query.username || '').trim();
+
+    if (!username || !/^[\w.]{1,60}$/.test(username)) {
+      return res.status(400).json({
+        error: 'Voer een geldige gebruikersnaam in.',
+      });
+    }
+
+    const urls = [
+      `https://www.instagram.com/${username}/`,
+      `https://www.instagram.com/api/v1/users/web_profile_info/?username=${username}`,
+    ];
+
+    // Try fetching the profile page for og:image
+    const profileRes = await fetch(urls[0], {
+      signal: AbortSignal.timeout(15000),
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+    });
+
+    if (!profileRes.ok) {
+      return res.status(404).json({
+        error: `Profiel niet gevonden of geblokkeerd door Instagram (status ${profileRes.status}).`,
+      });
+    }
+
+    const html = await profileRes.text();
+
+    const ogMatch =
+      html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
+      html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
+
+    // Also try to find HD URL in JSON data embedded in the page
+    const hdMatch = html.match(/"hd_profile_pic_url_info"\s*:\s*\{\s*"url"\s*:\s*"([^"]+)"/);
+    const standardMatch = html.match(/"profile_pic_url_hd"\s*:\s*"([^"]+)"/);
+
+    const photoUrl = hdMatch?.[1] || standardMatch?.[1] || ogMatch?.[1] || null;
+
+    if (!photoUrl) {
+      return res.json({
+        username,
+        message: 'Kon geen profielfoto vinden. Account is mogelijk privé of Instagram blokkeert het verzoek.',
+        photoUrl: null,
+      });
+    }
+
+    // Unescape JSON-escaped URLs
+    const cleanUrl = photoUrl.replace(/\\u0026/g, '&').replace(/\\\//g, '/');
+
+    res.json({
+      username,
+      photoUrl: cleanUrl,
+      hdAvailable: !!(hdMatch || standardMatch),
+    });
+  } catch (err) {
+    console.error('Profile photo HD error:', err.message);
+    res.status(502).json({
+      error: `Fout bij ophalen van profielfoto: ${err.message}`,
+    });
+  }
+});
+
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 const PORT = process.env.PORT || 3000;
