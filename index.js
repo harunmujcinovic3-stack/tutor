@@ -132,7 +132,7 @@ async function fetchSnapshots(profileUrl, limit) {
   });
 
   const res = await fetch(`${CDX_API}?${params}`, {
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(30000),
   });
 
   if (!res.ok) throw new Error(`Wayback Machine API error: ${res.status}`);
@@ -190,6 +190,7 @@ app.get('/profile-photos', async (req, res) => {
       });
     }
 
+    const extractPhotos = req.query.extract === 'true';
     const profileUrl = urlBuilder(username);
     const rawSnapshots = await fetchSnapshots(profileUrl, limit);
 
@@ -205,20 +206,17 @@ app.get('/profile-photos', async (req, res) => {
     const snapshots = await Promise.all(
       rawSnapshots.map(async ({ timestamp, original }) => {
         const archiveUrl = `https://web.archive.org/web/${timestamp}/${original}`;
-        const photoUrl = await extractProfilePhoto(archiveUrl);
+        const photoUrl = extractPhotos ? await extractProfilePhoto(archiveUrl) : null;
         return { timestamp, date: formatTimestamp(timestamp), archiveUrl, photoUrl };
       })
     );
 
-    const withPhotos = snapshots.filter((s) => s.photoUrl !== null);
+    const result = { username, platform, totalSnapshots: snapshots.length, snapshots };
+    if (extractPhotos) {
+      result.snapshotsWithPhotos = snapshots.filter((s) => s.photoUrl !== null).length;
+    }
 
-    res.json({
-      username,
-      platform,
-      totalSnapshots: snapshots.length,
-      snapshotsWithPhotos: withPhotos.length,
-      snapshots,
-    });
+    res.json(result);
   } catch (err) {
     console.error('Profile photos error:', err.message);
     res.status(502).json({
