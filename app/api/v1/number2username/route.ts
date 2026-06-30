@@ -14,14 +14,10 @@ export async function GET(request: NextRequest) {
 
   if ("error" in result) {
     const debug = "debug" in result ? result.debug : undefined;
-    if (result.error === "RATE_LIMIT") return ERRORS.RATE_LIMIT_EXCEEDED(60);
-    if (result.error === "FETCH_FAILED") {
-      return Response.json(
-        { status: "error", error: { code: "FETCH_FAILED", message: "Upstream request to Instagram failed; retry.", debug } },
-        { status: 424 }
-      );
-    }
-    return ERRORS.NOT_FOUND(result.error);
+    return Response.json(
+      { status: "error", error: { code: result.error, message: result.error, debug }, http: result.status },
+      { status: result.status }
+    );
   }
 
   return Response.json({
