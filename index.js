@@ -111,6 +111,203 @@ app.post('/ask', async (req, res) => {
   }
 });
 
+// --- Profile Photo History (Wayback Machine) ---
+
+const PLATFORM_URLS = {
+  instagram: (u) => `https://www.instagram.com/${u}/`,
+  twitter: (u) => `https://twitter.com/${u}`,
+  x: (u) => `https://x.com/${u}`,
+};
+
+const CDX_API = 'https://web.archive.org/cdx/search/cdx';
+
+async function fetchSnapshots(profileUrl, limit) {
+  const params = new URLSearchParams({
+    url: profileUrl,
+    output: 'json',
+    fl: 'timestamp,original,statuscode',
+    filter: 'statuscode:200',
+    collapse: 'timestamp:6',
+    limit: String(limit),
+  });
+
+  const res = await fetch(`${CDX_API}?${params}`, {
+    signal: AbortSignal.timeout(30000),
+  });
+
+  if (!res.ok) throw new Error(`Wayback Machine API error: ${res.status}`);
+
+  const data = await res.json();
+  if (!data || data.length < 2) return [];
+
+  const [, ...rows] = data;
+  return rows.map(([timestamp, original]) => ({ timestamp, original }));
+}
+
+async function extractProfilePhoto(archiveUrl) {
+  try {
+    const res = await fetch(archiveUrl, {
+      signal: AbortSignal.timeout(10000),
+      headers: { 'User-Agent': 'ProfilePhotoHistoryTool/1.0' },
+    });
+    if (!res.ok) return null;
+
+    const html = await res.text();
+
+    const ogMatch =
+      html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
+      html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
+
+    if (ogMatch && ogMatch[1]) return ogMatch[1];
+
+    const imgMatch = html.match(/<img[^>]+class="[^"]*profile[^"]*"[^>]+src=["']([^"']+)["']/i);
+    return imgMatch ? imgMatch[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+function formatTimestamp(ts) {
+  return `${ts.slice(0, 4)}-${ts.slice(4, 6)}-${ts.slice(6, 8)}`;
+}
+
+app.get('/profile-photos', async (req, res) => {
+  try {
+    const username = (req.query.username || '').trim();
+    const platform = (req.query.platform || 'instagram').toLowerCase();
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 20, 1), 50);
+
+    if (!username || !/^[\w.]{1,60}$/.test(username)) {
+      return res.status(400).json({
+        error: 'Voer een geldige gebruikersnaam in (letters, cijfers, underscores, punten).',
+      });
+    }
+
+    const urlBuilder = PLATFORM_URLS[platform];
+    if (!urlBuilder) {
+      return res.status(400).json({
+        error: `Ongeldig platform. Kies uit: ${Object.keys(PLATFORM_URLS).join(', ')}`,
+      });
+    }
+
+    const extractPhotos = req.query.extract === 'true';
+    const profileUrl = urlBuilder(username);
+    const rawSnapshots = await fetchSnapshots(profileUrl, limit);
+
+    if (rawSnapshots.length === 0) {
+      return res.json({
+        username,
+        platform,
+        message: 'Geen gearchiveerde snapshots gevonden voor dit profiel.',
+        snapshots: [],
+      });
+    }
+
+    const snapshots = await Promise.all(
+      rawSnapshots.map(async ({ timestamp, original }) => {
+        const archiveUrl = `https://web.archive.org/web/${timestamp}/${original}`;
+        const photoUrl = extractPhotos ? await extractProfilePhoto(archiveUrl) : null;
+        return { timestamp, date: formatTimestamp(timestamp), archiveUrl, photoUrl };
+      })
+    );
+
+    const result = { username, platform, totalSnapshots: snapshots.length, snapshots };
+    if (extractPhotos) {
+      result.snapshotsWithPhotos = snapshots.filter((s) => s.photoUrl !== null).length;
+    }
+
+    res.json(result);
+  } catch (err) {
+    console.error('Profile photos error:', err.message);
+    res.status(502).json({
+      error: `Fout bij ophalen van profielfotos: ${err.message}`,
+    });
+  }
+});
+
+function toHD(url) {
+  if (!url) return null;
+  // Remove size restriction from stp parameter: s150x150 → s1080x1080
+  let hd = url.replace(/stp=dst-([^&]*?)s\d+x\d+/, 'stp=dst-$1s1080x1080');
+  // Also try removing the stp param entirely for original size
+  const original = url.replace(/[?&]stp=[^&]+/, '');
+  return { hd, original };
+}
+
+const IG_HEADERS = { 'User-Agent': 'Instagram 275.0.0.27.98 Android' };
+
+async function getInstagramUserInfo(username) {
+  // Step 1: Search for user to get their ID
+  const searchRes = await fetch(
+    `https://i.instagram.com/api/v1/users/search/?q=${encodeURIComponent(username)}`,
+    { signal: AbortSignal.timeout(10000), headers: IG_HEADERS }
+  );
+
+  if (!searchRes.ok) throw new Error(`Instagram zoek-API error: ${searchRes.status}`);
+
+  const searchData = await searchRes.json();
+  const match = searchData?.users?.find(
+    (u) => u.username.toLowerCase() === username.toLowerCase()
+  );
+
+  if (!match) return null;
+
+  // Step 2: Get full user info with ID (this endpoint works reliably)
+  const infoRes = await fetch(
+    `https://i.instagram.com/api/v1/users/${match.pk}/info/`,
+    { signal: AbortSignal.timeout(10000), headers: IG_HEADERS }
+  );
+
+  if (!infoRes.ok) throw new Error(`Instagram user-API error: ${infoRes.status}`);
+
+  const infoData = await infoRes.json();
+  const user = infoData?.user;
+
+  return {
+    id: user.pk || user.id,
+    username: user.username,
+    profilePic: user.profile_pic_url,
+    hdProfilePic: user.hd_profile_pic_url_info?.url || user.profile_pic_url_hd || null,
+  };
+}
+
+app.get('/profile-photo-hd', async (req, res) => {
+  try {
+    const username = (req.query.username || '').trim();
+
+    if (!username || !/^[\w.]{1,60}$/.test(username)) {
+      return res.status(400).json({
+        error: 'Voer een geldige gebruikersnaam in.',
+      });
+    }
+
+    const user = await getInstagramUserInfo(username);
+
+    if (!user) {
+      return res.status(404).json({
+        error: 'Gebruiker niet gevonden op Instagram.',
+      });
+    }
+
+    const hdUrl = user.hdProfilePic;
+    const sdUrl = user.profilePic;
+    const upgraded = toHD(sdUrl);
+
+    res.json({
+      username: user.username,
+      userId: user.id,
+      hdProfilePic: hdUrl,
+      sdProfilePic: sdUrl,
+      upgradedUrls: upgraded,
+    });
+  } catch (err) {
+    console.error('Profile photo HD error:', err.message);
+    res.status(502).json({
+      error: `Fout bij ophalen: ${err.message}`,
+    });
+  }
+});
+
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 const PORT = process.env.PORT || 3000;
