@@ -244,14 +244,34 @@ function upgradeToHD(cdnUrl) {
 async function fetchFromTrendHero(username, debug = false) {
   let browser;
   try {
-    const launchOpts = { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] };
+    const launchOpts = {
+      headless: false,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-blink-features=AutomationControlled',
+        '--headless=new',
+      ],
+    };
     if (process.env.CHROMIUM_PATH) launchOpts.executablePath = process.env.CHROMIUM_PATH;
     browser = await chromium.launch(launchOpts);
-    const page = await browser.newPage();
+    const context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      viewport: { width: 1280, height: 800 },
+    });
+    const page = await context.newPage();
+
+    // Hide webdriver property
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+    });
+
     await page.goto(`https://trendhero.io/instagram/${username}/`, {
       waitUntil: 'networkidle',
       timeout: 30000,
     });
+    // Wait extra for dynamic content
+    await page.waitForTimeout(3000);
 
     // Grab all image sources from the page
     const photos = await page.evaluate((uname) => {
@@ -278,9 +298,17 @@ async function fetchFromTrendHero(username, debug = false) {
 
     const pageTitle = await page.title();
     const pageUrl = page.url();
+
+    let screenshotPath = null;
+    if (debug) {
+      const path = require('path');
+      screenshotPath = path.join(__dirname, `debug-${username}.png`);
+      await page.screenshot({ path: screenshotPath, fullPage: true });
+    }
+
     await browser.close();
 
-    if (debug) return { photos, pageTitle, pageUrl };
+    if (debug) return { photos, pageTitle, pageUrl, screenshotPath };
     if (photos.length === 0) return null;
 
     // Try to find the profile photo: look for CDN URLs first, then largest image
