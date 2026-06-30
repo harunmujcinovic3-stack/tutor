@@ -60,7 +60,18 @@ export async function lookupNumberToUsername(
       };
     }
 
-    if (res.status === 429) return { error: "RATE_LIMIT", status: 429 };
+    if (res.status === 429 || data.spam || data.message === "rate_limit_error") {
+      return { error: "RATE_LIMIT", status: 429, debug: `HTTP ${res.status}: ${text.slice(0, 300)}` };
+    }
+
+    // If not OK and not handled, show the raw response for debugging
+    if (!res.ok) {
+      return {
+        error: "FETCH_FAILED",
+        status: 424,
+        debug: `HTTP ${res.status}: ${text.slice(0, 500)}`,
+      };
+    }
 
     // users/lookup can return the user object directly
     const user = data.user as Record<string, unknown> | undefined;
