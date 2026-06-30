@@ -1,0 +1,27 @@
+import { type NextRequest } from "next/server";
+import { ERRORS } from "../_lib/errors";
+import { lookupNumberToUsername } from "../_lib/instagram";
+
+export async function GET(request: NextRequest) {
+  const number = request.nextUrl.searchParams.get("number");
+  if (!number) {
+    return ERRORS.BAD_REQUEST(
+      "Missing required parameter: number (phone number in international format with country code)."
+    );
+  }
+
+  const result = await lookupNumberToUsername(number);
+
+  if ("error" in result) {
+    const debug = "debug" in result ? result.debug : undefined;
+    return Response.json(
+      { status: "error", error: { code: result.error, message: result.error, debug } },
+      { status: result.status }
+    );
+  }
+
+  return Response.json({
+    status: "success",
+    data: { number, username: result.username },
+  });
+}
