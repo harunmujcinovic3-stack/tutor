@@ -225,6 +225,57 @@ app.get('/profile-photos', async (req, res) => {
   }
 });
 
+// Try to upgrade an Instagram CDN URL to higher resolution
+function upgradeToHD(cdnUrl) {
+  if (!cdnUrl) return [];
+  const variants = [cdnUrl];
+  // Remove size params like /s150x150/ or /s320x320/ to get original
+  const noSize = cdnUrl.replace(/\/s\d+x\d+\//, '/');
+  if (noSize !== cdnUrl) variants.push(noSize);
+  // Try common HD sizes
+  const hd = cdnUrl.replace(/\/s\d+x\d+\//, '/s1080x1080/');
+  if (hd !== cdnUrl) variants.push(hd);
+  const large = cdnUrl.replace(/\/s\d+x\d+\//, '/s640x640/');
+  if (large !== cdnUrl) variants.push(large);
+  return [...new Set(variants)];
+}
+
+async function fetchFromTrendHero(username) {
+  try {
+    const res = await fetch(`https://trendhero.io/instagram/${username}/`, {
+      signal: AbortSignal.timeout(15000),
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+    });
+    if (!res.ok) return null;
+
+    const html = await res.text();
+
+    // Look for profile image in the page
+    const imgMatch =
+      html.match(/<img[^>]+src=["'](https:\/\/[^"']*cdninstagram\.com[^"']+)["']/i) ||
+      html.match(/<img[^>]+src=["'](https:\/\/[^"']*instagram[^"']+)["']/i) ||
+      html.match(/<img[^>]+src=["'](https:\/\/[^"']*fbcdn\.net[^"']+)["']/i) ||
+      html.match(/["'](https:\/\/scontent[^"']*cdninstagram\.com[^"']+)["']/i) ||
+      html.match(/["'](https:\/\/[^"']*fbcdn\.net\/v\/[^"']+)["']/i);
+
+    if (imgMatch && imgMatch[1]) {
+      return imgMatch[1].replace(/&amp;/g, '&');
+    }
+
+    // Try og:image
+    const ogMatch =
+      html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
+      html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
+
+    return ogMatch?.[1]?.replace(/&amp;/g, '&') || null;
+  } catch {
+    return null;
+  }
+}
+
 app.get('/profile-photo-hd', async (req, res) => {
   try {
     const username = (req.query.username || '').trim();
@@ -235,54 +286,70 @@ app.get('/profile-photo-hd', async (req, res) => {
       });
     }
 
-    const urls = [
-      `https://www.instagram.com/${username}/`,
-      `https://www.instagram.com/api/v1/users/web_profile_info/?username=${username}`,
-    ];
+    const sources = [];
 
-    // Try fetching the profile page for og:image
-    const profileRes = await fetch(urls[0], {
-      signal: AbortSignal.timeout(15000),
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
-    });
-
-    if (!profileRes.ok) {
-      return res.status(404).json({
-        error: `Profiel niet gevonden of geblokkeerd door Instagram (status ${profileRes.status}).`,
+    // Source 1: Try Instagram directly
+    try {
+      const profileRes = await fetch(`https://www.instagram.com/${username}/`, {
+        signal: AbortSignal.timeout(15000),
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
       });
-    }
 
-    const html = await profileRes.text();
+      if (profileRes.ok) {
+        const html = await profileRes.text();
+        const hdMatch = html.match(/"hd_profile_pic_url_info"\s*:\s*\{\s*"url"\s*:\s*"([^"]+)"/);
+        const standardMatch = html.match(/"profile_pic_url_hd"\s*:\s*"([^"]+)"/);
+        const ogMatch =
+          html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
+          html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
 
-    const ogMatch =
-      html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
-      html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
+        const url = hdMatch?.[1] || standardMatch?.[1] || ogMatch?.[1];
+        if (url) {
+          const clean = url.replace(/\\u0026/g, '&').replace(/\\\//g, '/');
+          sources.push({ source: 'instagram', url: clean, hd: !!(hdMatch || standardMatch) });
+        }
+      }
+    } catch {}
 
-    // Also try to find HD URL in JSON data embedded in the page
-    const hdMatch = html.match(/"hd_profile_pic_url_info"\s*:\s*\{\s*"url"\s*:\s*"([^"]+)"/);
-    const standardMatch = html.match(/"profile_pic_url_hd"\s*:\s*"([^"]+)"/);
+    // Source 2: Try TrendHero (cached photos, works for deleted/changed photos)
+    try {
+      const thUrl = await fetchFromTrendHero(username);
+      if (thUrl) {
+        sources.push({ source: 'trendhero', url: thUrl, hd: false });
+      }
+    } catch {}
 
-    const photoUrl = hdMatch?.[1] || standardMatch?.[1] || ogMatch?.[1] || null;
-
-    if (!photoUrl) {
+    if (sources.length === 0) {
       return res.json({
         username,
-        message: 'Kon geen profielfoto vinden. Account is mogelijk privé of Instagram blokkeert het verzoek.',
+        message: 'Kon geen profielfoto vinden via Instagram of TrendHero.',
         photoUrl: null,
+        sources: [],
       });
     }
 
-    // Unescape JSON-escaped URLs
-    const cleanUrl = photoUrl.replace(/\\u0026/g, '&').replace(/\\\//g, '/');
+    // Try to upgrade all found URLs to HD
+    const allVariants = [];
+    for (const s of sources) {
+      const hdVariants = upgradeToHD(s.url);
+      allVariants.push({
+        ...s,
+        hdVariants,
+      });
+    }
+
+    // Pick the best: prefer Instagram HD, then TrendHero upgraded
+    const best = sources.find((s) => s.hd) || sources[0];
 
     res.json({
       username,
-      photoUrl: cleanUrl,
-      hdAvailable: !!(hdMatch || standardMatch),
+      photoUrl: best.url,
+      hdAvailable: best.hd,
+      sources: allVariants,
     });
   } catch (err) {
     console.error('Profile photo HD error:', err.message);
