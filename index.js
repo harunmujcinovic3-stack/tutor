@@ -1,6 +1,6 @@
 const express = require('express');
 const Anthropic = require('@anthropic-ai/sdk');
-const { chromium } = require('playwright-core');
+const { chromium } = require('playwright');
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -244,12 +244,9 @@ function upgradeToHD(cdnUrl) {
 async function fetchFromTrendHero(username, debug = false) {
   let browser;
   try {
-    const executablePath = process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
-    browser = await chromium.launch({
-      executablePath,
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    });
+    const launchOpts = { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] };
+    if (process.env.CHROMIUM_PATH) launchOpts.executablePath = process.env.CHROMIUM_PATH;
+    browser = await chromium.launch(launchOpts);
     const page = await browser.newPage();
     await page.goto(`https://trendhero.io/instagram/${username}/`, {
       waitUntil: 'networkidle',
