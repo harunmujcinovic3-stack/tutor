@@ -55,11 +55,22 @@ fx-engine/
     ├── registry.py      dé lijst met alle onderwerpen
     ├── utils.py         notatie (2,75), woordwrap, kleine helpers
     └── problems/
-        ├── parabool.py      top, snijpunten, discriminant, raaklijn
-        ├── exponentieel.py  waarde na t, tijd berekenen, % → factor
-        ├── goniometrie.py   SOS-CAS-TOA: zijden en hoeken
-        ├── kans.py          binomiaal, complement, E(X) en σ
-        └── statistiek.py    z-score, P(X > x), vuistregels 68/95
+        ├── parabool.py      top (min/max), snijpunten x-as, discriminant,
+        │                    raaklijn, snijden met g
+        ├── extremen.py      max p·t/(qt²+r) (quotiëntregel), oplossen
+        │                    pt/(qt²+r)=doel, max a·t·e^(-bt) (productregel)
+        ├── helling.py       helling x^(1/3)+c/x in een punt (machtsregel),
+        │                    raaklijn aan √(px²+q) evenwijdig aan y=mx
+        ├── sinusoide.py     D = a+b·sin(π/n·(kt+m)) = doel oplossen
+        │                    (eerste drie t), formule opstellen uit grafiek
+        ├── exponentieel.py  waarde na t, tijd berekenen, % → factor,
+        │                    logistisch model L/(1+A·e^(-rt))
+        ├── verdeling.py     eigen kanstabel: E(X), P(som=s), P(gelijk),
+        │                    binomiaal "k v.d. n keer meer" (exacte breuken)
+        ├── kans.py          binomiaal P(X=k), complement, E(X) en σ
+        ├── statistiek.py    z-score, P(X > x), vuistregels, % tussen twee
+        │                    grenzen, som van verdelingen, hypothesetoets
+        └── goniometrie.py   SOS-CAS-TOA: zijden en hoeken
 ```
 
 ## Verantwoordelijkheden per module

@@ -9,15 +9,23 @@
 # ------------------------------------------------------------
 
 from fx.problems import parabool
+from fx.problems import extremen
+from fx.problems import helling
+from fx.problems import sinusoide
 from fx.problems import exponentieel
-from fx.problems import goniometrie
+from fx.problems import verdeling
 from fx.problems import kans
 from fx.problems import statistiek
+from fx.problems import goniometrie
 
 TOPICS = [
     parabool.TOPIC,
+    extremen.TOPIC,
+    helling.TOPIC,
+    sinusoide.TOPIC,
     exponentieel.TOPIC,
-    goniometrie.TOPIC,
+    verdeling.TOPIC,
     kans.TOPIC,
     statistiek.TOPIC,
+    goniometrie.TOPIC,
 ]

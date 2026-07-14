@@ -84,6 +84,42 @@ def _check_doel(waarde, values):
     return None
 
 
+def logistisch_tijd(v):
+    L, A, r, doel = v["L"], v["A"], v["r"], v["doel"]
+    v1 = L / doel                       # 1 + A·e^(-rt)
+    w = (v1 - 1) / A                    # e^(-rt)
+    t = math.log(w) / (-r)
+    return [
+        Step("Het logistische model",
+             ["N = L / (1 + A·e^(-r·t))",
+              "%s / (1 + %s·e^(-%st)) = %s"
+              % (nl(L), nl(A), nl(r), nl(doel))]),
+        Step("Noemer vrijmaken",
+             ["1 + %s·e^(-%st) = %s/%s" % (nl(A), nl(r), nl(L), nl(doel)),
+              "1 + %s·e^(-%st) = %s" % (nl(A), nl(r), nl(v1, 4))]),
+        Step("E-macht isoleren",
+             ["%s·e^(-%st) = %s" % (nl(A), nl(r), nl(v1 - 1, 4)),
+              "e^(-%st) = %s/%s = %s"
+              % (nl(r), nl(v1 - 1, 4), nl(A), nl(w, 4))]),
+        Step("Natuurlijke logaritme",
+             ["-%s·t = ln(%s)" % (nl(r), nl(w, 4)),
+              "-%s·t = %s" % (nl(r), nl(math.log(w), 4))]),
+        Step("Uitrekenen",
+             ["t = %s / -%s" % (nl(math.log(w), 4), nl(r)),
+              "t ≈ %s" % nl(t, 4)]),
+        Step("Conclusie",
+             ["De waarde %s wordt bereikt" % nl(doel),
+              "na t ≈ %s tijdseenheden." % nl(t, 2)]),
+    ]
+
+
+def _check_doel_log(waarde, vals):
+    L = vals.get("L", 1)
+    if waarde <= 0 or waarde >= L:
+        return "doel moet tussen 0 en L"
+    return None
+
+
 TOPIC = Topic("Exponentieel", [
     Problem("Waarde na tijd t", [
         Field("b", "b (begin) =", start=100, check=positief("b")),
@@ -98,4 +134,10 @@ TOPIC = Topic("Exponentieel", [
     Problem("% naar factor", [
         Field("p", "p (%) =", start=5, step=0.5),
     ], percentage_naar_factor),
+    Problem("Logistisch: tijd", [
+        Field("L", "L (grens) =", start=200, check=positief("L")),
+        Field("A", "A =", start=4, check=positief("A")),
+        Field("r", "r =", start=0.15, step=0.01, check=positief("r")),
+        Field("doel", "doel N =", start=100, check=_check_doel_log),
+    ], logistisch_tijd),
 ])

@@ -44,6 +44,46 @@ def wrap_alles(regels, breedte):
     return uit
 
 
+def ggd(a, b):
+    a, b = abs(int(a)), abs(int(b))
+    while b:
+        a, b = b, a % b
+    return a or 1
+
+
+def breuk(t, n):
+    """Vereenvoudigde breuk als tekst: breuk(10, 36) -> '5/18'."""
+    if n < 0:
+        t, n = -t, -n
+    g = ggd(t, n)
+    t //= g
+    n //= g
+    if n == 1:
+        return str(t)
+    return "%d/%d" % (t, n)
+
+
+def pi_frac(x, dec=3):
+    """Hoek als nette breuk van pi: pi_frac(pi/2) -> '1/2π'."""
+    import math
+    r = x / math.pi
+    for d in (1, 2, 3, 4, 6, 9, 12, 18, 36):
+        n = r * d
+        if abs(n - round(n)) < 1e-9:
+            n = int(round(n))
+            if n == 0:
+                return "0"
+            teken = "-" if n < 0 else ""
+            n = abs(n)
+            g = ggd(n, d)
+            n //= g
+            d //= g
+            if d == 1:
+                return teken + ("π" if n == 1 else "%dπ" % n)
+            return "%s%d/%dπ" % (teken, n, d)
+    return nl(x, dec) + " rad"
+
+
 def term(coef, macht_txt, eerste=False):
     """Bouwsteen voor nette formules: term(-8, 'x') -> '- 8x'."""
     if coef == 0:

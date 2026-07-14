@@ -85,7 +85,7 @@ _VELDEN_NP = [
     Field("p", "p =", start=0.5, step=0.05, check=tussen("p", 0, 1)),
 ]
 
-TOPIC = Topic("Kans", [
+TOPIC = Topic("Binomiaal", [
     Problem("Binomiaal P(X=k)",
             _VELDEN_NP + [Field("k", "k =", start=3, integer=True,
                                 check=_check_k)],

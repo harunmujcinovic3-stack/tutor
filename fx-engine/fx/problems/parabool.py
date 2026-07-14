@@ -98,10 +98,60 @@ def raaklijn(v):
     ]
 
 
+def snijden_met_g(v):
+    a, b, c = v["a"], v["b"], v["c"]
+    d, e, h = v["d"], v["e"], v["h"]
+    A, B, C = a - d, b - e, c - h
+    stappen = [
+        Step("De twee functies",
+             ["f(x) = " + me.poly_str(a, b, c),
+              "g(x) = " + me.poly_str(d, e, h)]),
+        Step("Stel f(x) = g(x)",
+             [me.poly_str(a, b, c) + " =",
+              me.poly_str(d, e, h)]),
+        Step("Alles naar links",
+             ["f(x) - g(x) = 0",
+              me.poly_str(A, B, C) + " = 0"]),
+    ]
+    if A == 0:
+        x = -C / float(B)
+        stappen.append(Step("Lineair oplossen",
+                            ["%sx = %s" % (nl(B), nl(-C)),
+                             "x = %s" % nl(x, 3)]))
+        wortels = [x]
+    else:
+        abc, wortels = me.abc_formule_stappen(A, B, C)
+        stappen.extend(abc)
+    if wortels:
+        for x in wortels:
+            y = me.f_waarde(d, e, h, x)
+            stappen.append(Step("Snijpunt bij x = " + nl(x, 3),
+                                ["y = g(%s) = %s" % (nl(x, 3), nl(y, 3)),
+                                 "snijpunt (%s, %s)"
+                                 % (nl(x, 3), nl(y, 3))]))
+    else:
+        stappen.append(Step("Conclusie",
+                            ["De grafieken snijden",
+                             "elkaar niet."]))
+    return stappen
+
+
+def _check_g_anders(waarde, vals):
+    if (vals.get("a", 0) - vals.get("d", 0) == 0
+            and vals.get("b", 0) - waarde == 0):
+        return "f en g mogen niet evenwijdig"
+    return None
+
+
 TOPIC = Topic("Parabool", [
     Problem("Top bepalen", _velden_abc(), top),
     Problem("Snijpunten x-as", _velden_abc(), snijpunten),
     Problem("Discriminant", _velden_abc(), discriminant),
     Problem("Raaklijn", _velden_abc() + [Field("x0", "x0 =", start=1)],
             raaklijn),
+    Problem("Snijden met g", _velden_abc() + [
+        Field("d", "g: d (x²) =", start=0),
+        Field("e", "g: e (x) =", start=1, check=_check_g_anders),
+        Field("h", "g: h =", start=0),
+    ], snijden_met_g),
 ])
