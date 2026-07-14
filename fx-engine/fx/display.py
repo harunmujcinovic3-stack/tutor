@@ -40,5 +40,7 @@ class ConsoleDisplay(Display):
         print()
         print(rand)
         for line in lines[: self.rows]:
-            print("| " + line[: self.width].ljust(self.width) + " |")
+            s = line[: self.width]
+            s += " " * (self.width - len(s))    # MicroPython heeft geen ljust
+            print("| " + s + " |")
         print(rand)
